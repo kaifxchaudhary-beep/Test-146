@@ -33,7 +33,7 @@ A streamlined, stable, and high-performance WhatsApp bot focused on **Auto-Forwa
 ### **Local Installation**
 ```bash
 # Clone the repository
-git clone https://github.com/ixxwasi/Wasi-Light-Md.git
+git clone https://github.com/KaifxChaudhary-dev/Kaif-Md
 
 # Install dependencies
 npm install
