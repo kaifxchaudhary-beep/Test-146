@@ -565,3 +565,45 @@ async function main() {
 }
 
 main();
+// -----------------------------------------------------------------------------
+// API ROUTES
+// -----------------------------------------------------------------------------
+wasi_app.get('/api/status', async (req, res) => {
+    const sessionId = req.query.sessionId || config.sessionId || 'wasi_session';
+    const session = sessions.get(sessionId);
+
+    let qrDataUrl = null;
+    let connected = false;
+
+    if (session) {
+        connected = session.isConnected;
+        if (session.qr) {
+            try {
+                qrDataUrl = await QRCode.toDataURL(session.qr, { width: 256 });
+            } catch (e) { }
+        }
+    }
+
+    res.json({
+        sessionId,
+        connected,
+        qr: qrDataUrl,
+        activeSessions: Array.from(sessions.keys())
+    });
+});
+
+wasi_app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// -----------------------------------------------------------------------------
+// SERVER START
+// -----------------------------------------------------------------------------
+function wasi_startServer() {
+    wasi_app.listen(wasi_port, () => {
+        console.log(`🌐 Server running on port ${wasi_port}`);
+        console.log(`📡 Auto Forward: ${SOURCE_JIDS.length} source(s) → ${TARGET_JIDS.length} target(s)`);
+        console.log(`✨ Message Cleaning: Forwarded labels removed, Newsletter markers cleaned`);
+        console.log(`🤖 Bot Commands: .ping, .jid, .gjid, . forward`);
+    });
+}
