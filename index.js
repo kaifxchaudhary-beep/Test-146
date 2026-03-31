@@ -22,6 +22,12 @@ const wasi_app = express();
 const wasi_port = process.env.PORT || 3000;
 
 const sessions = new Map();
+app.get('/', (req, res) => {
+    res.json({
+        status: 'OK',
+        message: 'WhatsApp Bot API is running 🚀'
+    });
+});
 // -----------------------------------------------------------------------------
 // PLUGIN LOADER (Only 4 specific commands)
 // -----------------------------------------------------------------------------
