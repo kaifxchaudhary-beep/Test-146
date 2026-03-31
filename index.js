@@ -53,6 +53,64 @@ function wasi_loadPlugins() {
     console.log(`✅ Loaded ${wasi_plugins.size} core commands.`);
 }
 // -----------------------------------------------------------------------------
+// SESSION MANAGEMENT
+// -----------------------------------------------------------------------------
+async function startSession(sessionId) {
+    if (sessions.has(sessionId)) {
+        const existing = sessions.get(sessionId);
+        if (existing.isConnected && existing.sock) return;
+        if (existing.sock) {
+            existing.sock.ev.removeAllListeners('connection.update');
+            existing.sock.end(undefined);
+            sessions.delete(sessionId);
+        }
+    }
+
+    console.log(`🚀 Starting session: ${sessionId}`);
+    const sessionState = { sock: null, isConnected: false };
+    sessions.set(sessionId, sessionState);
+
+    const { wasi_sock, saveCreds } = await wasi_connectSession(false, sessionId);
+    sessionState.sock = wasi_sock;
+
+    // Register listeners immediately to avoid missing events
+    console.log(`📡 [${sessionId}] Socket created, listening for events...`);
+
+    wasi_sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
+
+        if (qr) {
+            try {
+                sessionState.qr = await qrcode.toDataURL(qr);
+            } catch (e) {
+                console.error('Failed to generate QR:', e.message);
+            }
+        }
+
+        if (connection === 'close') {
+            sessionState.isConnected = false;
+            sessionState.qr = null;
+            const statusCode = (lastDisconnect?.error instanceof Boom) ?
+                lastDisconnect.error.output.statusCode : 500;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut && statusCode !== 440;
+
+            console.log(`Session ${sessionId}: Connection closed, reconnecting: ${shouldReconnect}`);
+            if (shouldReconnect) {
+                setTimeout(() => startSession(sessionId), 3000);
+            } else {
+                sessions.delete(sessionId);
+                await wasi_clearSession(sessionId);
+            }
+        } else if (connection === 'open') {
+            sessionState.isConnected = true;
+            sessionState.qr = null;
+            console.log(`✅ ${sessionId}: Connected to WhatsApp`);
+        }
+    });
+
+    wasi_sock.ev.on('creds.update', saveCreds);
+
+// -----------------------------------------------------------------------------
 // AUTO FORWARD CONFIGURATION
 // -----------------------------------------------------------------------------
 const SOURCE_JIDS = process.env.SOURCE_JIDS
@@ -391,63 +449,6 @@ wasi_app.post('/api/config', (req, res) => {
     });
 }
     
-// -----------------------------------------------------------------------------
-// SESSION MANAGEMENT
-// -----------------------------------------------------------------------------
-async function startSession(sessionId) {
-    if (sessions.has(sessionId)) {
-        const existing = sessions.get(sessionId);
-        if (existing.isConnected && existing.sock) return;
-        if (existing.sock) {
-            existing.sock.ev.removeAllListeners('connection.update');
-            existing.sock.end(undefined);
-            sessions.delete(sessionId);
-        }
-    }
-
-    console.log(`🚀 Starting session: ${sessionId}`);
-    const sessionState = { sock: null, isConnected: false };
-    sessions.set(sessionId, sessionState);
-
-    const { wasi_sock, saveCreds } = await wasi_connectSession(false, sessionId);
-    sessionState.sock = wasi_sock;
-
-    // Register listeners immediately to avoid missing events
-    console.log(`📡 [${sessionId}] Socket created, listening for events...`);
-
-    wasi_sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
-
-        if (qr) {
-            try {
-                sessionState.qr = await qrcode.toDataURL(qr);
-            } catch (e) {
-                console.error('Failed to generate QR:', e.message);
-            }
-        }
-
-        if (connection === 'close') {
-            sessionState.isConnected = false;
-            sessionState.qr = null;
-            const statusCode = (lastDisconnect?.error instanceof Boom) ?
-                lastDisconnect.error.output.statusCode : 500;
-            const shouldReconnect = statusCode !== DisconnectReason.loggedOut && statusCode !== 440;
-
-            console.log(`Session ${sessionId}: Connection closed, reconnecting: ${shouldReconnect}`);
-            if (shouldReconnect) {
-                setTimeout(() => startSession(sessionId), 3000);
-            } else {
-                sessions.delete(sessionId);
-                await wasi_clearSession(sessionId);
-            }
-        } else if (connection === 'open') {
-            sessionState.isConnected = true;
-            sessionState.qr = null;
-            console.log(`✅ ${sessionId}: Connected to WhatsApp`);
-        }
-    });
-
-    wasi_sock.ev.on('creds.update', saveCreds);
 
     // -------------------------------------------------------------------------
     // MESSAGE HANDLER
@@ -565,45 +566,3 @@ async function main() {
 }
 
 main();
-// -----------------------------------------------------------------------------
-// API ROUTES
-// -----------------------------------------------------------------------------
-wasi_app.get('/api/status', async (req, res) => {
-    const sessionId = req.query.sessionId || config.sessionId || 'wasi_session';
-    const session = sessions.get(sessionId);
-
-    let qrDataUrl = null;
-    let connected = false;
-
-    if (session) {
-        connected = session.isConnected;
-        if (session.qr) {
-            try {
-                qrDataUrl = await QRCode.toDataURL(session.qr, { width: 256 });
-            } catch (e) { }
-        }
-    }
-
-    res.json({
-        sessionId,
-        connected,
-        qr: qrDataUrl,
-        activeSessions: Array.from(sessions.keys())
-    });
-});
-
-wasi_app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// -----------------------------------------------------------------------------
-// SERVER START
-// -----------------------------------------------------------------------------
-function wasi_startServer() {
-    wasi_app.listen(wasi_port, () => {
-        console.log(`🌐 Server running on port ${wasi_port}`);
-        console.log(`📡 Auto Forward: ${SOURCE_JIDS.length} source(s) → ${TARGET_JIDS.length} target(s)`);
-        console.log(`✨ Message Cleaning: Forwarded labels removed, Newsletter markers cleaned`);
-        console.log(`🤖 Bot Commands: .ping, .jid, .gjid, . forward`);
-    });
-}
