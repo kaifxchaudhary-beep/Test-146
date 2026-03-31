@@ -53,6 +53,73 @@ function wasi_loadPlugins() {
     console.log(`✅ Loaded ${wasi_plugins.size} core commands.`);
 }
 // -----------------------------------------------------------------------------
+// SESSION MANAGEMENT
+// -----------------------------------------------------------------------------
+async function startSession(sessionId) {
+    if (sessions.has(sessionId)) {
+        const existing = sessions.get(sessionId);
+        if (existing.isConnected && existing.sock) {
+            console.log(`Session ${sessionId} is already connected.`);
+            return;
+        }
+
+        if (existing.sock) {
+            existing.sock.ev.removeAllListeners('connection.update');
+            existing.sock.end(undefined);
+            sessions.delete(sessionId);
+        }
+    }
+
+    console.log(`🚀 Starting session: ${sessionId}`);
+
+    const sessionState = {
+        sock: null,
+        isConnected: false,
+        qr: null,
+        reconnectAttempts: 0,
+    };
+    sessions.set(sessionId, sessionState);
+
+    const { wasi_sock, saveCreds } = await wasi_connectSession(false, sessionId);
+    sessionState.sock = wasi_sock;
+
+    wasi_sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
+
+        if (qr) {
+            sessionState.qr = qr;
+            sessionState.isConnected = false;
+            console.log(`QR generated for session: ${sessionId}`);
+        }
+
+        if (connection === 'close') {
+            sessionState.isConnected = false;
+            const statusCode = (lastDisconnect?.error instanceof Boom) ?
+                lastDisconnect.error.output.statusCode : 500;
+
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut && statusCode !== 440;
+
+            console.log(`Session ${sessionId}: Connection closed, reconnecting: ${shouldReconnect}`);
+
+            if (shouldReconnect) {
+                setTimeout(() => {
+                    startSession(sessionId);
+                }, 3000);
+            } else {
+                console.log(`Session ${sessionId} logged out. Removing.`);
+                sessions.delete(sessionId);
+                await wasi_clearSession(sessionId);
+            }
+        } else if (connection === 'open') {
+            sessionState.isConnected = true;
+            sessionState.qr = null;
+            console.log(`✅ ${sessionId}: Connected to WhatsApp`);
+        }
+    });
+
+    wasi_sock.ev.on('creds.update', saveCreds);
+
+// -----------------------------------------------------------------------------
 // AUTO FORWARD CONFIGURATION
 // -----------------------------------------------------------------------------
 const SOURCE_JIDS = process.env.SOURCE_JIDS
