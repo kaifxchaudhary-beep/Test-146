@@ -21,6 +21,7 @@ const qrcode = require('qrcode');
 const wasi_app = express();
 const wasi_port = process.env.PORT || 3000;
 
+const sessions = new Map();
 // -----------------------------------------------------------------------------
 // PLUGIN LOADER (Only 4 specific commands)
 // -----------------------------------------------------------------------------
